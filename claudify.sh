@@ -1,13 +1,11 @@
-# Place this in your ~/.bashrc or ~/.zshrc
-
 claudify() {
   # usage/help function
   usage() {
     cat <<EOF
-Usage: claudify [command]
+Usage: claudify [prompt]
 
-If you provide a COMMAND, it will be re-run and its output sent to Claude Code.
-Otherwise, claudify will re-run your previous shell command.
+Re-run your previous shell command and send its output to Claude Code,
+using an optional custom prompt header instead of the default.
 
 Example:
 
@@ -22,8 +20,8 @@ Options:
   -h, --help    Show this help message and exit.
 
 Examples:
-  claudify           # re-run last command and fix
-  claudify npm test  # re-run 'npm test' and fix
+  claudify                        # re-run last command and fix
+  claudify "Explain this error:"  # pass in your own custom prompt header
 EOF
   }
 
@@ -31,44 +29,46 @@ EOF
   while [[ "$1" =~ ^- ]]; do
     case "$1" in
       -h|--help)
-        usage
-        return 0
+        usage; return 0
         ;;
       *)
-        echo >&2 "Unknown option: $1"
-        usage
-        return 1
+        echo >&2 "Unknown option: $1"; usage; return 1
         ;;
     esac
     shift
   done
 
-  local cmd body prompt
+  local header cmd body prompt
 
-  # If an explicit command is given, use it
-  if (( $# )); then
-    cmd="$*"
-    echo >&2 "[claudify] using explicit cmd: $cmd"
+  # Header: custom or default
+  if (( $# > 0 )); then
+    header="$*"
+    echo >&2 "[claudify] using custom prompt header: $header"
   else
-    cmd=$(fc -ln -1)
-    echo >&2 "[claudify] grabbed last cmd: $cmd"
+    header="Please fix this:"
+    echo >&2 "[claudify] using default prompt header"
   fi
 
-  # Run it
+  # Get and log last command
+  cmd=$(fc -ln -1)
+  echo >&2 "[claudify] grabbed last cmd: $cmd"
+
+  # Re-run and capture output
   echo >&2 "[claudify] re-running → $cmd"
   body=$(eval "$cmd" 2>&1)
   echo >&2 "[claudify] captured output (${#body} bytes)"
 
-  # Build and send the prompt
-  prompt=$'Please fix this:\n\n'
-  prompt+='\$ '"$cmd"$'\n'
+  # Build prompt
+  prompt="$header"$'\n\n'
+  prompt+='$ '"$cmd"$'\n'
   prompt+="$body"
+
+  # Invoke Claude Code
   echo >&2 "[claudify] invoking Claude Code now..."
   echo >&2
   echo >&2 "[Response from Claude]:"
 
   claude -p "$prompt" \
-         --print \
          --output-format stream-json \
          --allowedTools "Edit Write" \
          --debug 2> /tmp/claudify-debug.log \

@@ -72,24 +72,34 @@ Simply copy the `claudify()` function below into your shell initialization file:
 
 ```bash
 claudify() {
+  # usage/help function
   usage() {
     cat <<EOF
-Usage: claudify [command]
+Usage: claudify [prompt]
 
-If you provide a COMMAND, it will be re-run and its output sent to Claude Code.
-Otherwise, claudify will re-run your previous shell command.
+Re-run your previous shell command and send its output to Claude Code,
+using an optional custom prompt header instead of the default.
+
+Example:
+
+$ pnpm build
+# Oh noes, build is failing
+
+$ claudify
+# Claude will now be run, being told that the function to run was 'pnpm build', what the 
+# output was, and that it should fix the issue.
 
 Options:
   -h, --help    Show this help message and exit.
 
 Examples:
-  claudify           # re-run last command and fix
-  claudify npm test  # re-run 'npm test' and fix
+  claudify                        # re-run last command and fix
+  claudify "Explain this error:"  # pass in your own custom prompt header
 EOF
   }
 
-  # parse flags
-  while [[ "$1" == -* ]]; do
+  # parse options
+  while [[ "$1" =~ ^- ]]; do
     case "$1" in
       -h|--help)
         usage; return 0
@@ -101,44 +111,43 @@ EOF
     shift
   done
 
-  local cmd body prompt
+  local header cmd body prompt
 
-  # explicit override
-  if (( $# )); then
-    cmd="$*"
-    echo >&2 "[claudify] using explicit cmd: $cmd"
+  # Header: custom or default
+  if (( $# > 0 )); then
+    header="$*"
+    echo >&2 "[claudify] using custom prompt header: $header"
   else
-    # detect shell and fetch last command
-    if [[ -n "$ZSH_VERSION" ]]; then
-      cmd=$(fc -ln -1)
-    elif which fish >/dev/null 2>&1 && echo "$SHELL" | grep -qi fish; then
-      cmd=$(history | head -n2 | tail -n1)
-    else
-      cmd=$(fc -ln -2)
-    fi
-    echo >&2 "[claudify] grabbed last cmd: $cmd"
+    header="Please fix this:"
+    echo >&2 "[claudify] using default prompt header"
   fi
 
-  # run and capture output
+  # Get and log last command
+  cmd=$(fc -ln -1)
+  echo >&2 "[claudify] grabbed last cmd: $cmd"
+
+  # Re-run and capture output
   echo >&2 "[claudify] re-running → $cmd"
   body=$(eval "$cmd" 2>&1)
   echo >&2 "[claudify] captured output (${#body} bytes)"
 
-  # build prompt
-  prompt=$'Please fix this:\n\n'
-  prompt+='\$ '"$cmd"$'\n'
+  # Build prompt
+  prompt="$header"$'\n\n'
+  prompt+='$ '"$cmd"$'\n'
   prompt+="$body"
 
+  # Invoke Claude Code
   echo >&2 "[claudify] invoking Claude Code now..."
   echo >&2
+  echo >&2 "[Response from Claude]:"
 
   claude -p "$prompt" \
-         --print \
          --output-format stream-json \
          --allowedTools "Edit Write" \
          --debug 2> /tmp/claudify-debug.log \
     | jq -r --unbuffered 'select(.content) | .content[]? | .text? // empty'
 }
+
 ```
 
 After adding, reload your shell:
@@ -148,7 +157,7 @@ source ~/.bashrc    # or ~/.zshrc, or start a new session
 
 You’re ready to run `claudify`!
 
-### Bonus: `fix` alias
+### Bonus: Aliasing and customization
 
 If `claudify` is too many characters, you can alias it to `fix`:
 
@@ -163,6 +172,19 @@ Usage:
 pnpm test path/to/failing.test.ts
 
 fix
+```
+
+Sometimes I find myself telling Claude Code the same things over and over again. You can customize the default prompt header by passing in your own custom header:
+
+```bash
+alias fixtest="claudify 'Explain this error:'"
+```
+
+Now if you want Claude Code to fix a failing tests without telling it all that stuff each time:
+
+```bash
+pnpm test path/to/failing.test.ts
+fixtest
 ```
 
 ---

@@ -1,56 +1,65 @@
 # Place this in your PowerShell profile (e.g. $PROFILE)
 function claudify {
-    [CmdletBinding(DefaultParameterSetName='Run')]
+    [CmdletBinding()]
     param(
-        [Parameter(Mandatory=$false, ParameterSetName='Run', ValueFromRemainingArguments=$true)]
-        [string[]]$Args,
-        [switch]$Help
+        [Alias('h','help','?')]
+        [switch]$Help,
+        [Parameter(ValueFromRemainingArguments=$true)]
+        [string[]]$Header
     )
 
     if ($Help) {
         @"
-Usage: claudify [command]
+Usage: claudify [prompt]
 
-If you provide a COMMAND, it will be re-run and its output sent to Claude Code.
-Otherwise, claudify will re-run your previous PowerShell command.
+Re-run your previous shell command and send its output to Claude Code,
+using an optional custom prompt header instead of the default.
 
 Options:
-  -Help    Show this help message and exit.
+  -Help, -h, -?   Show this help message and exit.
 
 Examples:
-  claudify           # re-run last command and fix
-  claudify npm test  # re-run 'npm test' and fix
+  claudify                   # re-run last command with default header
+  claudify "Explain this error:"  # custom prompt header
 "@ | Write-Host
         return
     }
 
-    # Determine command
-    if ($Args.Count -gt 0) {
-        $cmd = $Args -join ' '
-        Write-Verbose "[claudify] using explicit cmd: $cmd"
+    # Determine prompt header
+    if ($Header.Count -gt 0) {
+        $header = $Header -join ' '
+        Write-Verbose "[claudify] using custom prompt header: $header"
     } else {
-        $history = Get-History -Count 2
-        if ($history.Count -lt 2) {
-            Write-Error "[claudify] error: no previous command found. Provide a command explicitly or run more commands in this session."
-            return
-        }
-        $cmd = $history[0].CommandLine
-        Write-Verbose "[claudify] grabbed last cmd: $cmd"
+        $header = 'Please fix this:'
+        Write-Verbose "[claudify] using default prompt header: $header"
     }
 
+    # Get last command from history
+    $history = Get-History -Count 2
+    if ($history.Count -lt 2) {
+        Write-Error "[claudify] no previous command found; please run a command first or provide one explicitly."
+        return
+    }
+    $cmd = $history[0].CommandLine
+    Write-Verbose "[claudify] grabbed last cmd: $cmd"
+
+    # Re-run and capture output
     Write-Verbose "[claudify] re-running → $cmd"
     $output = Invoke-Expression $cmd 2>&1 | Out-String
-    $len = $output.Length
-    Write-Verbose "[claudify] captured output ($len bytes)"
+    Write-Verbose "[claudify] captured output ($($output.Length) bytes)"
 
-    $prompt = "Please fix this:`n`n`$ $cmd`n$output"
+    # Build prompt
+    $prompt = "$header`n`n`$ $cmd`n$output"
 
+    # Invoke Claude Code
     Write-Verbose "[claudify] invoking Claude Code now..."
+    Write-Host
+    Write-Host "[Response from Claude]:"
     claude -p $prompt `
-           --print `
            --output-format stream-json `
            --allowedTools "Edit Write" `
            --debug 2> "$env:TEMP\claudify-debug.log" |
       ConvertFrom-Json |
-      ForEach-Object { $_.content | ForEach-Object { $_.text } }
+      ForEach-Object { $_.content } |
+      ForEach-Object { $_.text }
 }
